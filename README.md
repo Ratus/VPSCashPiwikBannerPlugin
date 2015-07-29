@@ -17,7 +17,11 @@ V0.1 - First stable version of the plugin, room for improvements
 ## Install
 
 Copy the contents of the zip to PiwikDirectory/plugins/VpsCashPromo
+
 Browse to your Piwik version using a webbrowser (NOT IE OR MICROSOFT EDGE)
+
 Login and go to:
+
 Settings > Plugin Settings > Find VpsCashPromo here and enable the plugin.
+
 It will not (probably) work
