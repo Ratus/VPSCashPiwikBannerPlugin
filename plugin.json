@@ -1,16 +1,16 @@
 {
-  "name": "VpsCashPromo",
-  "version": "0.1.0",
-  "description": "Piwik Platform showcase: how to create widgets, menus, scheduled tasks, a custom archiver, plugin tests, and a AngularJS component.",
-  "theme": false,
-  "require": {
-    "piwik": ">=2.14.1"
-  },
-  "authors": [
-    {
-      "name": "Piwik",
-      "email": "",
-      "homepage": ""
+    "name": "VpsCashPromo",
+    "description": "Special plugin for Piwik to show Banner statistics based on Content Impression and Content interaction. Special plugin for the Piwik system to report clickthrough rates of our banners.",
+    "version": "0.1.0",
+    "homepage": "http://vpscash.nl",
+    "authors": [
+        {
+            "name": "Sebastiaan van Arkens",
+            "email": "sebastiaan@vpscash.nl",
+            "homepage": "http://sebastiaanvanarkens.nl"
+        }
+    ],
+    "require": {
+        "piwik": ">=2.14.1"
     }
-  ]
 }
