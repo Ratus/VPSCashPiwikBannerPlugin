@@ -36,7 +36,7 @@ class API extends \Piwik\Plugin\API
                     )  DEFAULT CHARSET=utf8 ";
             Db::exec($sql);
         }
-        catch{
+        catch (\Exception $e) {
             // ignore error if table already exists (1050 code is for 'table already exists')
             if (!Db::get()->isErrNo($e, '1050')) {
                 throw $e;
@@ -82,7 +82,7 @@ class API extends \Piwik\Plugin\API
 
         foreach ($contentNames->getRows() as $contentName)  {
             $bannerName = $contentName->getColumn('label');
-            
+
             $row = new Row(array(
                 //Row::COLUMNS => $contentName->getColumns(),
                 Row::COLUMNS => array(
@@ -105,12 +105,12 @@ class API extends \Piwik\Plugin\API
     private function bannerStats($bannerName, $params)
     {
         $contentPiece = false;
-        
+
         if (strpos($bannerName, '_') !== false) {
             list($bannerName, $contentPiece) = explode('_', $bannerName);
         }
 
-        $segment = 'contentName=='. $bannerName;            
+        $segment = 'contentName=='. $bannerName;
 
         $recordName = Dimensions::getRecordNameForAction('getContentPieces');
         $subTable  = Archive::getDataTableFromArchive($recordName, $params['idSite'], $params['period'], $params['date'], $segment, true);
@@ -147,29 +147,29 @@ class API extends \Piwik\Plugin\API
             */
 
             $result = Db::fetchAll("
-                    SELECT 
+                    SELECT
                         trim(substring_index(piwik_log_action.name, '|', 1)) as referrer,
                         trim(substring_index(piwik_log_action.name, '|', -1)) as target,
-                        sum(IF(idaction_content_interaction is null, 1, 0)) as impressions, 
+                        sum(IF(idaction_content_interaction is null, 1, 0)) as impressions,
                         sum(IF(idaction_content_interaction is null, 0, 1)) as interactions,
                         ((100 / sum(IF(idaction_content_interaction is null, 1, 0))) * sum(IF(idaction_content_interaction is null, 0, 1))) as conversion_rate
-                    FROM piwik_log_link_visit_action 
+                    FROM piwik_log_link_visit_action
                     left join piwik_log_action on piwik_log_action.idaction = idaction_content_target
-                    WHERE 
+                    WHERE
                         idaction_content_name in (SELECT idaction FROM piwik_log_action WHERE name = ?)
                     and
                         idaction_content_piece = ?
-                    
+
                     $where
 
                     group by piwik_log_action.name
                     order by $orderColumn $orderOrder
                     limit $orderLimit
             ", array(
-                    $bannerName, 
+                    $bannerName,
                     $contentPiece
                 ));
-        
+
             foreach ($result as $row) {
                 $bannerRow = new Row(array(
                     Row::COLUMNS => array(
@@ -180,7 +180,7 @@ class API extends \Piwik\Plugin\API
                             'Conversion rate' => round($row['conversion_rate']).'%'
                     )
                 ));
-              
+
               $bannerTable->addRow($bannerRow);
             }
         }

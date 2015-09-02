@@ -8,6 +8,11 @@
             "name": "Sebastiaan van Arkens",
             "email": "sebastiaan@vpscash.nl",
             "homepage": "http://sebastiaanvanarkens.nl"
+        },
+        {
+          "name": "Ronald Baltus",
+          "email": "ronald@vpscash.nl",
+          "homepage": "http://vpscash.nl"
         }
     ],
     "require": {
