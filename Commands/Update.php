@@ -76,13 +76,9 @@ class Update extends ConsoleCommand
 
         $this->createTableIfNotExists();
 
-
-
-
-
         $websiteId    = $input->getOption('website');
         $date         = $input->getOption('date') ? $input->getOption('date') : "today";
-        $contentNames = $this->getContentNames( /* $websiteId, $date */);
+        // $contentNames = $this->getContentNames( /* $websiteId, $date */);
 
         $date = date('Y-m-d', strtotime($date));
 
@@ -111,7 +107,7 @@ class Update extends ConsoleCommand
 
     protected function createTableIfNotExists()
     {
-        $result = Db::fetchOne("SHOW TABLES LIKE '{$this->tablePrefix}bannerstats'");
+        $result = Db::tableExists("{$this->tablePrefix}bannerstats");
         if ($result) {
             return;
         }
@@ -188,14 +184,20 @@ class Update extends ConsoleCommand
                 custom_var_v1, custom_var_v2, custom_var_v3, label, referrer, target
         ";
 
+        $this->clearDay($date);
+
         for ($i = 0; $i < 24; $i++) {
             $hour = ($i < 10 ? '0'.$i : $i );
 
-            $rows = Db::fetchAll($query, $a= array(
+            $rows = Db::fetchAll($query, $a = array(
                 $siteid,
                 $date.' ' . $hour . ':00:00',
                 $date.' ' . $hour . ':59:59'
             ));
+
+            if (count($rows) === 0) {
+                continue;
+            }
 
             $this->output->writeln("Hour {$hour} - Found " . count($rows) . " rows");
 
@@ -225,7 +227,7 @@ class Update extends ConsoleCommand
             ) values (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
-            on duplicate key update `impression` = ? , `interaction` = ?
+            on duplicate key update `impression` = `impression` + ? , `interaction` = `interaction` + ?
         ";
 
         $params = array_merge(
