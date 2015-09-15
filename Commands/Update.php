@@ -50,10 +50,11 @@ class Update extends ConsoleCommand
     protected function configure()
     {
         $this->setName('bannerstatistics:update');
-        $this->setDescription('Update the viewable banner statistics in the background');
+        $this->setDescription('Update the viewable banner statistics in the background. This is not recommended because the database trigger will insert as well!');
 
         $this->addOption('website', null, InputOption::VALUE_REQUIRED, 'Website ID containing the banners');
         $this->addOption('date', null, InputOption::VALUE_OPTIONAL, 'Date of the day that should be processed');
+        $this->addOption('hour', null, InputOption::VALUE_OPTIONAL, 'Hour of the day that should be processed');
     }
 
     /**
@@ -74,19 +75,17 @@ class Update extends ConsoleCommand
         $this->input       = $input;
         $this->output      = $output;
 
-        $this->createTableIfNotExists();
-
         $websiteId    = $input->getOption('website');
         $date         = $input->getOption('date') ? $input->getOption('date') : "today";
-        // $contentNames = $this->getContentNames( /* $websiteId, $date */);
+        $time         = $input->getOption('hour') ? $input->getOption('hour') : null;
 
         $date = date('Y-m-d', strtotime($date));
 
+        if (is_null($time)) {
+            $this->clearDay($date);
+        }
 
-        $this->clearDay($date);
-
-
-        $this->processContent($websiteId, $date);
+        $this->processContent($websiteId, $date, $time);
     }
 
     protected function getContentNames($websiteId = null, $date = null)
@@ -103,31 +102,6 @@ class Update extends ConsoleCommand
             "select `idaction`, `name` from `{$this->tablePrefix}log_action` where `type` = ?",
             array(\Piwik\Tracker\Action::TYPE_CONTENT_NAME)
         );
-    }
-
-    protected function createTableIfNotExists()
-    {
-        $result = Db::tableExists("{$this->tablePrefix}bannerstats");
-        if ($result) {
-            return;
-        }
-
-        DbHelper::createTable('bannerstats', "
-            `label` varchar(100) not null,
-            `content_name_id` int not null,
-            `impression`    int not null,
-            `interaction`   int not null,
-            `referrer`      varchar(200),
-            `target`        varchar(200),
-            `date`          date,
-            `custom_var_v1`	varchar(200),
-            `custom_var_v2`	varchar(200),
-            `custom_var_v3`	varchar(200),
-            `custom_var_v4`	varchar(200),
-            `custom_var_v5`	varchar(200),
-
-            UNIQUE KEY `unique_combination` (`date`, `label`, `content_name_id`, `referrer`, `target`)
-       ");
     }
 
     /**
@@ -148,7 +122,12 @@ class Update extends ConsoleCommand
         Db::query($query, array($date));
     }
 
-    protected function processContent($siteid, $date)
+    /**
+     * @param int $siteid
+     * @param string $date
+     * @param int|null $hour
+     */
+    protected function processContent($siteid, $date, $hour)
     {
         $this->output->writeln('VPSCash: Updating banner statistics for ' . $date);
 
@@ -184,27 +163,59 @@ class Update extends ConsoleCommand
                 custom_var_v1, custom_var_v2, custom_var_v3, label, referrer, target
         ";
 
-        $this->clearDay($date);
+        $startHour = $hour ? $hour : 0;
+        $endHour   = $hour ? intval($hour) + 1 : 24;
 
-        for ($i = 0; $i < 24; $i++) {
+        // Make it even smaller queries.
+        $quarters = array(
+            '00:00' => '59:59'
+        );
+
+        for ($i = $startHour; $i < $endHour; $i++) {
             $hour = ($i < 10 ? '0'.$i : $i );
 
-            $rows = Db::fetchAll($query, $a = array(
-                $siteid,
-                $date.' ' . $hour . ':00:00',
-                $date.' ' . $hour . ':59:59'
-            ));
+            foreach ($quarters as $minuteStart => $minuteEnd) {
+                $start = $date.' ' . $hour . ':' . $minuteStart;
+                $end   = $date.' ' . $hour . ':' . $minuteEnd;
 
-            if (count($rows) === 0) {
-                continue;
-            }
-
-            $this->output->writeln("Hour {$hour} - Found " . count($rows) . " rows");
-
-            foreach ($rows as $row) {
-                $this->processRow($row);
+                $this->processTimespan($siteid, $query, $start, $end);
             }
         }
+    }
+
+    protected function processTimespan($siteid, $query, $start, $end)
+    {
+        $this->output->writeln("Querying {$start} to {$end}");
+
+        $startQuery = microtime(true);
+
+        $rows = Db::fetchAll($query, array(
+            $siteid,
+            $start,
+            $end
+        ));
+
+        $endQuery = microtime(true);
+
+        if (count($rows) === 0) {
+            return;
+        }
+
+        $this->output->writeln("\t{$start} - {$end}: Found " . count($rows) . " rows, in " . ($endQuery - $startQuery) . ' seconds');
+
+        $j = 0;
+
+        $this->output->writeln("");
+
+        foreach ($rows as $row) {
+            $j++;
+
+            $this->output->write("\rProgress {$j}/" . count($rows));
+
+            $this->processRow($row);
+        }
+
+        $this->output->writeln("\nDone");
     }
 
     protected function processRow($values)
@@ -238,3 +249,4 @@ class Update extends ConsoleCommand
         Db::query($query, $params);
     }
 }
+

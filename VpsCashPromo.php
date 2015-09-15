@@ -11,24 +11,41 @@ namespace Piwik\Plugins\VpsCashPromo;
 use Piwik\Db;
 use Piwik\Common;
 use \Exception;
+use Piwik\DbHelper;
 
 class VpsCashPromo extends \Piwik\Plugin
 {
+    static $TRIGGER_NAME = 'Bannerstats_auto_update';
+
+    /**
+     * Installs the plugin. Derived classes should implement this class if the plugin
+     * needs to:
+     *
+     * - create tables
+     * - update existing tables
+     * - etc.
+     *
+     * @throws \Exception if installation of fails for some reason.
+     */
     public function install()
     {
         try{
-            $sql = "CREATE TABLE " . Common::prefixTable('vpscash_promotools') . " (
-                        idpromotools int( 10 ) unsigned NOT NULL AUTO_INCREMENT,
-                        toolname varchar(255) NOT NULL,
-                        date datetime NOT NULL,
-                        label varchar(255) NOT NULL,
-                        referrer varchar(255),
-                        target varchar(255),
-                        impressions int(10),
-                        interactions int(10),
-                        PRIMARY KEY ( idpromotools )
-                    )  DEFAULT CHARSET=utf8 ";
-            Db::exec($sql);
+            DbHelper::createTable('bannerstats', "
+            `label` varchar(100) not null,
+            `content_name_id` int not null,
+            `impression`    int not null,
+            `interaction`   int not null,
+            `referrer`      varchar(200),
+            `target`        varchar(200),
+            `date`          date,
+            `custom_var_v1`	varchar(200),
+            `custom_var_v2`	varchar(200),
+            `custom_var_v3`	varchar(200),
+            `custom_var_v4`	varchar(200),
+            `custom_var_v5`	varchar(200),
+
+            UNIQUE KEY `unique_combination` (`date`, `label`, `content_name_id`, `referrer`, `target`)
+       ");
         }
         catch(Exception $e){
             // ignore error if table already exists (1050 code is for 'table already exists')
@@ -38,81 +55,109 @@ class VpsCashPromo extends \Piwik\Plugin
         }
     }
 
+    /**
+     * Uninstalls the plugins. Derived classes should implement this method if the changes
+     * made in {@link install()} need to be undone during uninstallation.
+     *
+     * In most cases, if you have an {@link install()} method, you should provide
+     * an {@link uninstall()} method.
+     *
+     * @throws \Exception if uninstallation of fails for some reason.
+     */
     public function uninstall()
     {
-        Db::dropTables(Common::prefixTable('vpscash_promotools'));
+        Db::dropTables(Common::prefixTable('bannerstats'));
+    }
+
+    /**
+     * Executed every time the plugin is enabled.
+     */
+    public function activate()
+    {
+        $this->deactivate(); // remove the trigger
+
+        $query = '
+        CREATE TRIGGER ' .self::$TRIGGER_NAME. ' AFTER INSERT ON `' . Common::prefixTable('log_link_visit_action') . '` FOR EACH ROW
+        BEGIN
+            # Variables
+            set @impression  = if(NEW.idaction_content_interaction is null, 1, 0);
+            set @interaction = if(NEW.idaction_content_interaction is null, 0, 1);
+
+            # variables from other tables
+            select
+                trim(substring_index(`name`, "|", 1)),
+                trim(substring_index(`name`, "|", -1))
+            into
+                @referrer, @target
+            from
+                `' . Common::prefixTable("log_action") . '` as `log_action`
+            where
+                `log_action`.idaction = NEW.idaction_content_target
+            ;
+
+            # get the label
+            select
+                `name`
+            into
+                @label
+            from
+                `' . Common::prefixTable('log_action') . '` as `log_action_piece`
+            where
+                `log_action_piece`.idaction = NEW.idaction_content_piece
+            ;
+
+            insert into `' . Common::prefixTable('bannerstats') . '`
+            (
+                `label`,
+                `content_name_id`,
+                `date`          ,
+                `impression`    ,
+                `interaction`   ,
+                `referrer`      ,
+                `target`        ,
+                `custom_var_v1`	,
+                `custom_var_v2`	,
+                `custom_var_v3`	,
+                `custom_var_v4`	,
+                `custom_var_v5`
+            ) values (
+                @label,
+                NEW.`idaction_content_name`,
+                date(NEW.server_time),
+                if(NEW.idaction_content_interaction is null, 1, 0),
+                if(NEW.idaction_content_interaction is null, 0, 1),
+                @referrer,
+                @target,
+                NEW.custom_var_v1,
+                NEW.custom_var_v2,
+                NEW.custom_var_v3,
+                NEW.custom_var_v4,
+                NEW.custom_var_v5
+            )  on duplicate key update
+                `impression` = `impression` + @impression ,
+                `interaction` = `interaction` + @interaction
+            ;
+        END ;
+        ';
+
+        try {
+            Db::query($query);
+        } catch (\Exception $ex) {
+            die("Unable to install trigger: " . $ex->getMessage());
+        }
+
+        return;
+    }
+
+    /**
+     * Executed every time the plugin is disabled.
+     */
+    public function deactivate()
+    {
+        $query = "DROP TRIGGER IF EXISTS " .self::$TRIGGER_NAME;
+
+        Db::query($query);
+
+        return;
     }
 }
-
-/*
- * CREATE TABLE `piwik_log_visit` (
-  `idvisit` int(10) unsigned NOT NULL AUTO_INCREMENT,
-  `idsite` int(10) unsigned NOT NULL,
-  `idvisitor` binary(8) NOT NULL,
-  `visit_last_action_time` datetime NOT NULL,
-  `config_id` binary(8) NOT NULL,
-  `location_ip` varbinary(16) NOT NULL,
-  `location_longitude` float(10,6) DEFAULT NULL,
-  `location_latitude` float(10,6) DEFAULT NULL,
-  `location_region` char(2) DEFAULT NULL,
-  `visitor_localtime` time NOT NULL,
-  `location_country` char(3) NOT NULL,
-  `location_city` varchar(255) DEFAULT NULL,
-  `config_device_type` tinyint(100) DEFAULT NULL,
-  `config_device_model` varchar(100) DEFAULT NULL,
-  `config_os` char(3) NOT NULL,
-  `config_os_version` varchar(100) DEFAULT NULL,
-  `visit_total_events` smallint(5) unsigned NOT NULL,
-  `visitor_days_since_last` smallint(5) unsigned NOT NULL,
-  `config_quicktime` tinyint(1) NOT NULL,
-  `config_pdf` tinyint(1) NOT NULL,
-  `config_realplayer` tinyint(1) NOT NULL,
-  `config_silverlight` tinyint(1) NOT NULL,
-  `config_windowsmedia` tinyint(1) NOT NULL,
-  `config_java` tinyint(1) NOT NULL,
-  `config_gears` tinyint(1) NOT NULL,
-  `config_resolution` varchar(9) NOT NULL,
-  `config_cookie` tinyint(1) NOT NULL,
-  `config_director` tinyint(1) NOT NULL,
-  `config_flash` tinyint(1) NOT NULL,
-  `config_device_brand` varchar(100) DEFAULT NULL,
-  `config_browser_version` varchar(20) NOT NULL,
-  `visitor_returning` tinyint(1) NOT NULL,
-  `visitor_days_since_order` smallint(5) unsigned NOT NULL,
-  `visitor_count_visits` smallint(5) unsigned NOT NULL,
-  `visit_entry_idaction_name` int(11) unsigned NOT NULL,
-  `visit_entry_idaction_url` int(11) unsigned NOT NULL,
-  `visit_first_action_time` datetime NOT NULL,
-  `visitor_days_since_first` smallint(5) unsigned NOT NULL,
-  `visit_total_time` smallint(5) unsigned NOT NULL,
-  `user_id` varchar(200) DEFAULT NULL,
-  `visit_goal_buyer` tinyint(1) NOT NULL,
-  `visit_goal_converted` tinyint(1) NOT NULL,
-  `visit_exit_idaction_name` int(11) unsigned NOT NULL,
-  `visit_exit_idaction_url` int(11) unsigned DEFAULT '0',
-  `referer_url` text NOT NULL,
-  `location_browser_lang` varchar(20) NOT NULL,
-  `config_browser_engine` varchar(10) NOT NULL,
-  `config_browser_name` varchar(10) NOT NULL,
-  `referer_type` tinyint(1) unsigned DEFAULT NULL,
-  `referer_name` varchar(70) DEFAULT NULL,
-  `visit_total_actions` smallint(5) unsigned NOT NULL,
-  `visit_total_searches` smallint(5) unsigned NOT NULL,
-  `referer_keyword` varchar(255) DEFAULT NULL,
-  `location_provider` varchar(100) DEFAULT NULL,
-  `custom_var_k1` varchar(200) DEFAULT NULL,
-  `custom_var_v1` varchar(200) DEFAULT NULL,
-  `custom_var_k2` varchar(200) DEFAULT NULL,
-  `custom_var_v2` varchar(200) DEFAULT NULL,
-  `custom_var_k3` varchar(200) DEFAULT NULL,
-  `custom_var_v3` varchar(200) DEFAULT NULL,
-  `custom_var_k4` varchar(200) DEFAULT NULL,
-  `custom_var_v4` varchar(200) DEFAULT NULL,
-  `custom_var_k5` varchar(200) DEFAULT NULL,
-  `custom_var_v5` varchar(200) DEFAULT NULL,
-  PRIMARY KEY (`idvisit`),
-  KEY `index_idsite_config_datetime` (`idsite`,`config_id`,`visit_last_action_time`),
-  KEY `index_idsite_datetime` (`idsite`,`visit_last_action_time`),
-  KEY `index_idsite_idvisitor` (`idsite`,`idvisitor`)
-) ENGINE=InnoDB AUTO_INCREMENT=661290 DEFAULT CHARSET=utf8
- */
