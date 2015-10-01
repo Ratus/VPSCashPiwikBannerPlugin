@@ -121,7 +121,7 @@ class VpsCashPromo extends \Piwik\Plugin
                 `custom_var_v4`	,
                 `custom_var_v5`
             ) values (
-                @label,
+                if (@label is null, "Unknown", @label),
                 NEW.`idaction_content_name`,
                 date(NEW.server_time),
                 if(NEW.idaction_content_interaction is null, 1, 0),
