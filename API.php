@@ -8,6 +8,7 @@
  */
 namespace Piwik\Plugins\VpsCashPromo;
 
+use Piwik\Common;
 use Piwik\DataTable;
 use Piwik\DataTable\Row;
 
@@ -15,8 +16,8 @@ use Piwik\Archive;
 use Piwik\Metrics;
 use Piwik\Piwik;
 use Piwik\Plugins\Contents\Archiver;
- use Piwik\Plugins\Contents\Dimensions;
- use Piwik\Db;
+use Piwik\Plugins\Contents\Dimensions;
+use Piwik\Db;
 
 /**
  * API for plugin VpsCashPromo
@@ -25,6 +26,7 @@ use Piwik\Plugins\Contents\Archiver;
  */
 class API extends \Piwik\Plugin\API
 {
+    private static $ID_SEPERATOR = "_";
 
     /**
      * Another example method that returns a data table.
@@ -36,138 +38,159 @@ class API extends \Piwik\Plugin\API
      */
     public function getBannerstatistics($idSite, $period, $date, $segment = false, $idSubtable = false, $filter_limit = 10, $filter_sort_column = 'impressions', $filter_sort_order = 'desc', $filter_pattern = null)
     {
-        $params = array(
-                'idSite' => $idSite,
-                'period' => $period,
-                'date'   => $date,
-                'segment' => $segment,
-                'filter_limit'=> $filter_limit,
-                'filter_sort_column' => $filter_sort_column,
-                'filter_sort_order'=> $filter_sort_order,
-                'filter_pattern' => $filter_pattern
-          );
+        $filter_limit = intval($filter_limit);
 
-        if ($idSubtable) {
-            return $this->bannerStats($idSubtable, $params);
+        if (!$idSubtable) {
+            return $this->globalStats($filter_limit, $date, $filter_sort_column, $filter_sort_order);
         }
 
-        $contentNames = \Piwik\API\Request::processRequest('Contents.getContentNames', $params);
-        $bannerTable = new Datatable();
+        if (is_numeric($idSubtable)) {
+            return $this->toolsStats($idSubtable, $filter_limit, $date, $filter_sort_column, $filter_sort_order);
+        }
 
-        //$period = $dataTable->getMetadata(DataTableFactory::TABLE_METADATA_PERIOD_INDEX);
-        //$bannerTable->setMetadataValues($contentNames->getAllTableMetadata());
+        $parameters = explode(self::$ID_SEPERATOR, $idSubtable);
 
-        foreach ($contentNames->getRows() as $contentName)  {
-            $bannerName = $contentName->getColumn('label');
-            
+        if (count($parameters) === 2) {
+            return $this->referrerStats(intval($parameters[0]), $parameters[1], $filter_sort_column, $filter_sort_order);
+        }
+
+        // Euh.
+        return new DataTable();
+    }
+
+    /**
+     * @param int    $filter_limit
+     * @param        $date
+     *
+     * @param string $filter_sort_column
+     * @param string $filter_sort_order
+     *
+     * @return DataTable
+     */
+    private function globalStats($filter_limit = 10, $date = null, $filter_sort_column = 'Interaction Rate', $filter_sort_order = 'desc')
+    {
+        $result = Db::fetchAll('
+            select
+                stats.content_name_id as `id`,
+                a.name as `Promotool`,
+                sum(stats.impression) as `Impressions`,
+                sum(stats.interaction) as `Interactions`,
+                if(sum(stats.interaction) = 0, 0, (sum(stats.interaction) / sum(stats.impression)) * 100) as `Interaction rate`
+            from
+                ' . Common::prefixTable('bannerstats') . ' stats
+
+            left join ' . Common::prefixTable('log_action') . ' as a on a.idaction = stats.content_name_id
+
+            group by stats.content_name_id
+            order by ? ?
+            limit ' . $filter_limit . '
+            ',
+            array($filter_sort_column, $filter_sort_order)
+        );
+
+        return $this->resultToDatatable($result);
+    }
+
+    /**
+     * @param int $toolId
+     * @param int $filter_limit
+     * @param     $date
+     *
+     * @return DataTable
+     */
+    private function toolsStats($toolId, $filter_limit = 10, $date = null, $filter_sort_column = 'Interaction Rate', $filter_sort_order = 'desc')
+    {
+        $result = Db::fetchAll('
+            select
+                stats.content_name_id as id,
+                stats.referrer,
+                sum(stats.impression) as `Impressions`,
+                sum(stats.interaction) as `Interactions`,
+                if(sum(stats.interaction) = 0, 0, (sum(stats.interaction) / sum(stats.impression)) * 100) as `Interaction rate`
+            from
+                ' . Common::prefixTable('bannerstats') . ' stats
+
+            where stats.content_name_id = ?
+
+            group by stats.referrer
+            order by ? ?
+
+            limit ' . $filter_limit . '
+            ',
+            array($toolId, $filter_sort_column, $filter_sort_order)
+        );
+
+
+        for($i=0; $i<count($result); $i++) {
+            $row = $result[$i];
+            $url = parse_url($row['referrer']);
+            $host = $url['host'];
+
+            //$result[$i]["id"] = implode(self::$ID_SEPERATOR, array($row["id"], $host));
+            unset($result[$i]["id"]);
+        }
+
+        return $this->resultToDatatable($result);
+    }
+
+    /**
+     * @param int    $toolId
+     * @param string $referrer
+     * @param int    $filter_limit
+     * @param        $date
+     *
+     * @param string $filter_sort_column
+     * @param string $filter_sort_order
+     *
+     * @return DataTable
+     */
+    private function referrerStats($toolId, $referrer, $filter_limit = 10, $date = null, $filter_sort_column = 'Interaction Rate', $filter_sort_order = 'desc')
+    {
+        $result = Db::fetchAll('
+            select
+                stats.label as `Label`,
+                stats.target as `Target`,
+                stats.custom_var_v2 as `Platform`,
+                stats.impression as `Impressions`,
+                stats.interaction as `Interactions`,
+                if(stats.interaction = 0, 0, (stats.interaction / stats.impression) * 100) as `Interaction rate`
+            from
+                ' . Common::prefixTable('bannerstats') . ' stats
+
+            where stats.content_name_id = ?
+            and   stats.referrer        like ?
+            order by ? ?
+
+            limit ' . $filter_limit . '
+            ',
+            array($toolId, "%" . $referrer . "%", $filter_sort_column, $filter_sort_order)
+        );
+
+        return $this->resultToDatatable($result);
+    }
+
+    /**
+     * @param array $result
+     * @return DataTable
+     */
+    private function resultToDatatable($result)
+    {
+        $retval = new DataTable();
+
+        foreach ($result as $row)  {
+            if (isset($row["id"])) {
+                $id = $row["id"];
+                unset($row["id"]);
+            }
+
             $row = new Row(array(
-                //Row::COLUMNS => $contentName->getColumns(),
-                Row::COLUMNS => array(
-                    'Name' => $bannerName,
-                    'Visits'=> $contentName->getColumn('nb_visits'),
-                    'Impressions'=> $contentName->getColumn('nb_impressions'),
-                    'Interactions'=> $contentName->getColumn('nb_interactions'),
-                    'Conversion rate'=> $contentName->getColumn('interaction_rate'),
-                    //'idsubdatatable' => 1,
-                ),
-                Row::DATATABLE_ASSOCIATED => $bannerName
+                Row::COLUMNS              => $row,
+                Row::DATATABLE_ASSOCIATED => isset($id) ? $id : null
             ));
 
-            $bannerTable->addRow($row);
+            $retval->addRow($row);
         }
 
-        return $bannerTable;
-    }
-
-    private function bannerStats($bannerName, $params)
-    {
-        $contentPiece = false;
-        
-        if (strpos($bannerName, '_') !== false) {
-            list($bannerName, $contentPiece) = explode('_', $bannerName);
-        }
-
-        $segment = 'contentName=='. $bannerName;            
-
-        $recordName = Dimensions::getRecordNameForAction('getContentPieces');
-        $subTable  = Archive::getDataTableFromArchive($recordName, $params['idSite'], $params['period'], $params['date'], $segment, true);
-        //echo '<pre>';
-        $bannerTable = new DataTable();
-
-        if (!$contentPiece) {
-            foreach ($subTable->getRows() as $row) {
-                $ContentPieceId = Db::fetchOne("SELECT idaction FROM piwik_log_action WHERE TYPE = 14 and name = ?", array($row->getColumn('label')));
-                $bannerRow = new Row(array(
-                    Row::COLUMNS => array(
-                        'Label'=> $row->getColumn('label'),
-                        //'Visits'=> $row->getColumn(2),
-                        'Impressions'=> $row->getColumn(41),
-                        'Interactions'=> $row->getColumn(42),
-                        'Conversion rate' => $this->interactionRate($row->getColumn(41), $row->getColumn(42))
-                    ),
-                    Row::DATATABLE_ASSOCIATED => implode('_', array($bannerName, $ContentPieceId)),   // $row->getColumn('label')
-                ));
-
-                $bannerTable->addRow($bannerRow);
-            }
-        } else {
-            $orderColumn = str_replace(' ', '_', strtolower($params['filter_sort_column']));
-            $orderOrder = in_array($params['filter_sort_order'], array('asc', 'desc')) ? $params['filter_sort_order'] : 'asc';
-            $orderLimit = intval($params['filter_limit']);
-            $where = '';
-
-            /*
-            TODO: filter_pattern is processed by piwik in some way. The results are good with this query, but piwik does some post-processing?
-            if (isset($params['filter_pattern'])) {
-                 $where = 'and piwik_log_action.name like "%' .  $params['filter_pattern'] . '%"';
-            }
-            */
-
-            $result = Db::fetchAll("
-                    SELECT 
-                        trim(substring_index(piwik_log_action.name, '|', 1)) as referrer,
-                        trim(substring_index(piwik_log_action.name, '|', -1)) as target,
-                        sum(IF(idaction_content_interaction is null, 1, 0)) as impressions, 
-                        sum(IF(idaction_content_interaction is null, 0, 1)) as interactions,
-                        ((100 / sum(IF(idaction_content_interaction is null, 1, 0))) * sum(IF(idaction_content_interaction is null, 0, 1))) as conversion_rate
-                    FROM piwik_log_link_visit_action 
-                    left join piwik_log_action on piwik_log_action.idaction = idaction_content_target
-                    WHERE 
-                        idaction_content_name in (SELECT idaction FROM piwik_log_action WHERE name = ?)
-                    and
-                        idaction_content_piece = ?
-                    
-                    $where
-
-                    group by piwik_log_action.name
-                    order by $orderColumn $orderOrder
-                    limit $orderLimit
-            ", array(
-                    $bannerName, 
-                    $contentPiece
-                ));
-        
-            foreach ($result as $row) {
-                $bannerRow = new Row(array(
-                    Row::COLUMNS => array(
-                            'Referrer'               => $row['referrer'],
-                            'Target'                  => $row['target'],
-                            'Impressions'        => $row['impressions'],
-                            'Interactions'        => $row['interactions'],
-                            'Conversion rate' => round($row['conversion_rate']).'%'
-                    )
-                ));
-              
-              $bannerTable->addRow($bannerRow);
-            }
-        }
-
-        return $bannerTable;
-
-    }
-
-    private function interactionRate($impressions, $interactions)
-    {
-        return round((100 / intval($impressions))  * intval($interactions)) . '%';
+        return $retval;
     }
 }
